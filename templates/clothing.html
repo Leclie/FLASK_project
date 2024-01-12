@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+
+{% block title %}Одежда - Мой Интернет-магазин{% endblock %}
+
+{% block content %}
+    <h2>Одежда</h2>
+    <ul>
+        {% for product in products %}
+            <li><a href="{{ url_for('product', product_id=product.id) }}">{{ product.name }}</a></li>
+        {% endfor %}
+    </ul>
+{% endblock %}
