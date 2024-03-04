@@ -1,138 +1,192 @@
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
-from fastapi import Request
-
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship, sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 
+# Создаем экземпляр FastAPI
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
 
-# Модели Pydantic для каждой таблицы
-class User(BaseModel):
-    id: int
+# Создаем экземпляр базы данных
+engine = create_engine('sqlite:///shop.db', echo=True)
+Base = declarative_base()
+
+# Определяем модели данных
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True)
+    first_name = Column(String)
+    last_name = Column(String)
+    email = Column(String)
+    password = Column(String)
+
+    orders = relationship('Order', back_populates='user')
+
+class Order(Base):
+    __tablename__ = 'orders'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    product_id = Column(Integer, ForeignKey('products.id'))
+    order_date = Column(String)
+    status = Column(String)
+
+    user = relationship('User', back_populates='orders')
+    product = relationship('Product', back_populates='orders')
+
+class Product(Base):
+    __tablename__ = 'products'
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    description = Column(String)
+    price = Column(Integer)
+
+    orders = relationship('Order', back_populates='product')
+
+# Создаем таблицы в базе данных
+Base.metadata.create_all(engine)
+
+# Создаем сессию для взаимодействия с базой данных
+Session = sessionmaker(bind=engine)
+session = Session()
+
+# Определяем модели данных Pydantic для валидации запросов и ответов
+class UserRequest(BaseModel):
     first_name: str
     last_name: str
     email: str
     password: str
 
-class Order(BaseModel):
+class UserResponse(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: str
+
+class OrderRequest(BaseModel):
+    user_id: int
+    product_id: int
+    order_date: str
+    status: str
+
+class OrderResponse(BaseModel):
     id: int
     user_id: int
     product_id: int
     order_date: str
     status: str
 
-class Product(BaseModel):
+class ProductRequest(BaseModel):
+    name: str
+    description: str
+    price: int
+
+class ProductResponse(BaseModel):
     id: int
     name: str
     description: str
-    price: float
-
-users_db = []
-orders_db = []
-products_db = []
+    price: int
 
 # CRUD операции для пользователей
-@app.post("/users/", response_model=User)
-async def create_user(user: User):
-    users_db.append(user)
+@app.post("/users/", response_model=UserResponse)
+async def create_user(user: UserRequest):
+    new_user = User(**user.dict())
+    session.add(new_user)
+    session.commit()
+    return new_user
+
+@app.get("/users/{user_id}", response_model=UserResponse)
+async def read_user(user_id: int):
+    user = session.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
     return user
 
-@app.get("/users/", response_model=List[User])
-async def read_users():
-    return users_db
+@app.put("/users/{user_id}", response_model=UserResponse)
+async def update_user(user_id: int, user: UserRequest):
+    user_db = session.query(User).filter(User.id == user_id).first()
+    if not user_db:
+        raise HTTPException(status_code=404, detail="User not found")
+    for key, value in user.dict().items():
+        setattr(user_db, key, value)
+    session.commit()
+    return user_db
 
-@app.get("/users/{user_id}", response_model=User)
-async def read_user(user_id: int):
-    for user in users_db:
-        if user.id == user_id:
-            return user
-    raise HTTPException(status_code=404, detail="User not found")
-
-@app.put("/users/{user_id}", response_model=User)
-async def update_user(user_id: int, user: User):
-    for i, u in enumerate(users_db):
-        if u.id == user_id:
-            users_db[i] = user
-            return user
-    raise HTTPException(status_code=404, detail="User not found")
-
-@app.delete("/users/{user_id}", response_model=User)
+@app.delete("/users/{user_id}", response_model=UserResponse)
 async def delete_user(user_id: int):
-    for i, user in enumerate(users_db):
-        if user.id == user_id:
-            del users_db[i]
-            return user
-    raise HTTPException(status_code=404, detail="User not found")
+    user = session.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    session.delete(user)
+    session.commit()
+    return user
 
 # CRUD операции для заказов
-@app.post("/orders/", response_model=Order)
-async def create_order(order: Order):
-    orders_db.append(order)
+@app.post("/orders/", response_model=OrderResponse)
+async def create_order(order: OrderRequest):
+    new_order = Order(**order.dict())
+    session.add(new_order)
+    session.commit()
+    return new_order
+
+@app.get("/orders/{order_id}", response_model=OrderResponse)
+async def read_order(order_id: int):
+    order = session.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
     return order
 
-@app.get("/orders/", response_model=List[Order])
-async def read_orders():
-    return orders_db
+@app.put("/orders/{order_id}", response_model=OrderResponse)
+async def update_order(order_id: int, order: OrderRequest):
+    order_db = session.query(Order).filter(Order.id == order_id).first()
+    if not order_db:
+        raise HTTPException(status_code=404, detail="Order not found")
+    for key, value in order.dict().items():
+        setattr(order_db, key, value)
+    session.commit()
+    return order_db
 
-@app.get("/orders/{order_id}", response_model=Order)
-async def read_order(order_id: int):
-    for order in orders_db:
-        if order.id == order_id:
-            return order
-    raise HTTPException(status_code=404, detail="Order not found")
-
-@app.put("/orders/{order_id}", response_model=Order)
-async def update_order(order_id: int, order: Order):
-    for i, o in enumerate(orders_db):
-        if o.id == order_id:
-            orders_db[i] = order
-            return order
-    raise HTTPException(status_code=404, detail="Order not found")
-
-@app.delete("/orders/{order_id}", response_model=Order)
+@app.delete("/orders/{order_id}", response_model=OrderResponse)
 async def delete_order(order_id: int):
-    for i, order in enumerate(orders_db):
-        if order.id == order_id:
-            del orders_db[i]
-            return order
-    raise HTTPException(status_code=404, detail="Order not found")
+    order = session.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    session.delete(order)
+    session.commit()
+    return order
 
-# CRUD операции для товаров
-@app.post("/products/", response_model=Product)
-async def create_product(product: Product):
-    products_db.append(product)
+# CRUD операции для продуктов
+@app.post("/products/", response_model=ProductResponse)
+async def create_product(product: ProductRequest):
+    new_product = Product(**product.dict())
+    session.add(new_product)
+    session.commit()
+    return new_product
+
+@app.get("/products/{product_id}", response_model=ProductResponse)
+async def read_product(product_id: int):
+    product = session.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
     return product
 
-@app.get("/products/", response_model=List[Product])
-async def read_products():
-    return products_db
+@app.put("/products/{product_id}", response_model=ProductResponse)
+async def update_product(product_id: int, product: ProductRequest):
+    product_db = session.query(Product).filter(Product.id == product_id).first()
+    if not product_db:
+        raise HTTPException(status_code=404, detail="Product not found")
+    for key, value in product.dict().items():
+        setattr(product_db, key, value)
+    session.commit()
+    return product_db
 
-@app.get("/products/{product_id}", response_model=Product)
-async def read_product(product_id: int):
-    for product in products_db:
-        if product.id == product_id:
-            return product
-    raise HTTPException(status_code=404, detail="Product not found")
-
-@app.put("/products/{product_id}", response_model=Product)
-async def update_product(product_id: int, product: Product):
-    for i, p in enumerate(products_db):
-        if p.id == product_id:
-            products_db[i] = product
-            return product
-    raise HTTPException(status_code=404, detail="Product not found")
-
-@app.delete("/products/{product_id}", response_model=Product)
+@app.delete("/products/{product_id}", response_model=ProductResponse)
 async def delete_product(product_id: int):
-    for i, product in enumerate(products_db):
-        if product.id == product_id:
-            del products_db[i]
-            return product
-    raise HTTPException(status_code=404, detail="Product not found")
+    product = session.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    session.delete(product)
+    session.commit()
+    return product
 
 if __name__ == "__main__":
     import uvicorn
